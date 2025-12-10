@@ -1,0 +1,36 @@
+{
+  "name": "fleettracker",
+  "version": "1.0.0",
+  "description": "Automotive Fleet Management Application - Security Demo",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "db:migrate": "node database/migrate.js",
+    "server": "node src/server.js"
+  },
+  "dependencies": {
+    "next": "15.0.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "express": "^4.18.2",
+    "pg": "^8.11.3",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "multer": "^1.4.5-lts.1",
+    "cookie-parser": "^1.4.6"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3",
+    "@types/node": "^20.10.0",
+    "eslint": "^8.55.0",
+    "eslint-config-next": "15.0.3"
+  }
+}

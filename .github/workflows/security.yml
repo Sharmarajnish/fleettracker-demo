@@ -1,0 +1,112 @@
+name: Precogs AI Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run Precogs AI Scanner
+        uses: precogs-ai/scan-action@v1
+        with:
+          api-key: ${{ secrets.PRECOGS_API_KEY }}
+          fail-on-critical: true
+          fail-on-high: false
+          scan-depth: full
+          output-format: sarif
+        continue-on-error: true
+      
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: precogs-results.sarif
+        continue-on-error: true
+      
+      - name: Upload scan results artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: precogs-scan-results
+          path: |
+            precogs-report.json
+            precogs-results.sarif
+          retention-days: 30
+      
+      - name: Comment PR with scan results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let report;
+            try {
+              report = JSON.parse(fs.readFileSync('precogs-report.json', 'utf8'));
+            } catch (e) {
+              report = {
+                critical: 'N/A',
+                high: 'N/A',
+                medium: 'N/A',
+                low: 'N/A',
+                reportUrl: 'Scan results not available'
+              };
+            }
+            
+            const criticalBadge = report.critical > 0 ? '🔴' : '🟢';
+            const highBadge = report.high > 0 ? '🟠' : '🟢';
+            
+            const comment = `## 🔒 Precogs AI Security Scan Results
+            
+            | Severity | Count |
+            |----------|-------|
+            | ${criticalBadge} Critical | ${report.critical} |
+            | ${highBadge} High | ${report.high} |
+            | 🟡 Medium | ${report.medium} |
+            | 🔵 Low | ${report.low} |
+            
+            ### Vulnerabilities Detected
+            
+            This application intentionally contains security vulnerabilities for demonstration:
+            
+            - **CWE-89**: SQL Injection in \`/api/vehicles/search\`
+            - **CWE-78**: Command Injection in \`/api/export\`
+            - **CWE-79**: Cross-Site Scripting in dashboard
+            - **CWE-22**: Path Traversal in \`/api/files\`
+            - **CWE-502**: Insecure Deserialization in \`/api/session\`
+            - **CWE-287**: Improper Authentication
+            - **CWE-798**: Hard-coded Credentials
+            - **CWE-862**: Missing Authorization
+            - **CWE-778**: Insufficient Logging
+            - **CVE-2025-55182**: React2Shell Pattern
+            
+            [View Full Report](${report.reportUrl || 'N/A'})
+            
+            ---
+            ⚠️ **Note**: This is a demo application. Do not deploy to production.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
