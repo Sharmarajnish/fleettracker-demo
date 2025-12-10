@@ -1,60 +1,42 @@
-/**
- * Vehicle Routes
- * 
- * VULNERABILITIES:
- * - CWE-89: SQL Injection in search endpoint
- * - CWE-862: Missing Authorization in delete endpoint
- */
+// Secure implementation of GET /api/vehicles/search using parameterized queries
+// and basic input validation to prevent SQL Injection (CWE-89).
 
-const express = require('express');
-const router = express.Router();
-const db = require('../lib/db');
-const { authenticate } = require('../middleware');
-
-/**
- * GET /api/vehicles
- * Get all vehicles
- */
-router.get('/', async (req, res) => {
-    try {
-        const result = await db.query(`
-      SELECT v.*, u.email as owner_email 
-      FROM vehicles v 
-      LEFT JOIN users u ON v.owner_id = u.id 
-      ORDER BY v.created_at DESC
-    `);
-        res.json(result.rows);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * GET /api/vehicles/search
- * Search vehicles by model or VIN
- * 
- * VULNERABILITY: CWE-89 - SQL Injection
- * User input is directly concatenated into SQL query without sanitization
- */
-router.get('/search', async (req, res) => {
+module.exports = async (req, res) => {
     try {
         const { query } = req.query;
 
-        if (!query) {
+        // Basic validation: require non-empty string
+        if (typeof query !== 'string' || query.trim().length === 0) {
             return res.status(400).json({ error: 'Search query required' });
         }
 
-        // VULNERABLE: Direct string concatenation - SQL Injection (CWE-89)
-        // Attacker can inject: ' OR '1'='1' --
-        // Or extract data: ' UNION SELECT password_hash, email, role, null, null, null, null, null, null FROM users --
-        const sql = `SELECT * FROM vehicles WHERE model LIKE '%${query}%' OR vin LIKE '%${query}%'`;
+        // Normalize and limit length to reduce abuse/DoS risk
+        const normalizedQuery = query.trim();
+        const MAX_LENGTH = 100; // adjust as appropriate for your use case
+        const safeQuery = normalizedQuery.slice(0, MAX_LENGTH);
 
-        const result = await db.query(sql);
-        res.json(result.rows);
+        // Use parameterized query with placeholders instead of string concatenation
+        // This ensures the user input is treated strictly as data, not executable SQL.
+        const sql = `
+            SELECT *
+            FROM vehicles
+            WHERE model ILIKE $1
+               OR vin ILIKE $1
+        `;
+
+        // Wrap the search term with wildcards in the parameter value, not in the SQL string
+        const params = [`%${safeQuery}%`];
+
+        const result = await db.query(sql, params);
+        return res.json(result.rows);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        // Avoid leaking internal details in production; log internally instead.
+        // Here we return a generic message while preserving status code.
+        console.error('Error in /api/vehicles/search:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
-});
+};
+
 
 /**
  * GET /api/vehicles/:id
