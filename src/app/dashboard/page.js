@@ -8,6 +8,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 
 export default function DashboardPage() {
     const [vehicles, setVehicles] = useState([]);
@@ -21,30 +22,26 @@ export default function DashboardPage() {
     });
 
     useEffect(() => {
+        const fetchVehicles = async () => {
+            try {
+                const response = await fetch('http://localhost:3001/api/vehicles');
+                const data = await response.json();
+                setVehicles(data);
+                setStats({
+                    total: data.length,
+                    active: data.filter(v => v.status === 'active').length,
+                    maintenance: data.filter(v => v.status === 'maintenance').length,
+                    totalMileage: data.reduce((sum, v) => sum + (v.mileage || 0), 0)
+                });
+            } catch (error) {
+                console.error('Failed to fetch vehicles:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
         fetchVehicles();
     }, []);
-
-    const fetchVehicles = async () => {
-        try {
-            const response = await fetch('http://localhost:3001/api/vehicles');
-            const data = await response.json();
-            setVehicles(data);
-            calculateStats(data);
-        } catch (error) {
-            console.error('Failed to fetch vehicles:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const calculateStats = (data) => {
-        setStats({
-            total: data.length,
-            active: data.filter(v => v.status === 'active').length,
-            maintenance: data.filter(v => v.status === 'maintenance').length,
-            totalMileage: data.reduce((sum, v) => sum + (v.mileage || 0), 0)
-        });
-    };
 
     const handleSearch = async (e) => {
         e.preventDefault();
@@ -151,9 +148,9 @@ export default function DashboardPage() {
                                     />
                                 </td>
                                 <td>
-                                    <a href={`/dashboard/${vehicle.id}`} className="btn btn-primary" style={{ marginRight: '0.5rem' }}>
+                                    <Link href={`/dashboard/${vehicle.id}`} className="btn btn-primary" style={{ marginRight: '0.5rem' }}>
                                         View
-                                    </a>
+                                    </Link>
                                     <button className="btn btn-danger">Delete</button>
                                 </td>
                             </tr>

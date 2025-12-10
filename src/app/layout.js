@@ -1,4 +1,5 @@
 import './globals.css';
+import Link from 'next/link';
 
 export const metadata = {
     title: 'FleetTracker - Automotive Fleet Management',
@@ -11,13 +12,13 @@ export default function RootLayout({ children }) {
             <body>
                 <nav className="navbar">
                     <div className="nav-container">
-                        <a href="/" className="nav-brand">
+                        <Link href="/" className="nav-brand">
                             🚗 FleetTracker
-                        </a>
+                        </Link>
                         <div className="nav-links">
-                            <a href="/dashboard">Dashboard</a>
-                            <a href="/vehicles">Vehicles</a>
-                            <a href="/maintenance">Maintenance</a>
+                            <Link href="/dashboard">Dashboard</Link>
+                            <Link href="/vehicles">Vehicles</Link>
+                            <Link href="/maintenance">Maintenance</Link>
                         </div>
                     </div>
                 </nav>
@@ -31,3 +32,4 @@ export default function RootLayout({ children }) {
         </html>
     );
 }
+

@@ -10,6 +10,7 @@
  */
 
 import VehicleDetails from '@/components/VehicleDetails';
+import Link from 'next/link';
 
 // Simulated vulnerable server-side data fetching
 async function getVehicleData(id) {
@@ -51,7 +52,7 @@ export default async function VehiclePage({ params }) {
             <div className="card">
                 <h1 className="page-title">Vehicle Not Found</h1>
                 <p>The requested vehicle could not be found.</p>
-                <a href="/dashboard" className="btn btn-primary">Back to Dashboard</a>
+                <Link href="/dashboard" className="btn btn-primary">Back to Dashboard</Link>
             </div>
         );
     }
@@ -61,9 +62,9 @@ export default async function VehiclePage({ params }) {
     return (
         <div>
             <div style={{ marginBottom: '1rem' }}>
-                <a href="/dashboard" style={{ color: 'var(--highlight-color)' }}>
+                <Link href="/dashboard" style={{ color: 'var(--highlight-color)' }}>
                     ← Back to Dashboard
-                </a>
+                </Link>
             </div>
 
             <h1 className="page-title">{vehicleData.model}</h1>

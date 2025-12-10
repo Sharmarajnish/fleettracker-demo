@@ -14,22 +14,22 @@ export default function VehicleDetails({ vehicle }) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        const fetchMaintenanceLogs = async () => {
+            try {
+                const response = await fetch(
+                    `http://localhost:3001/api/vehicles/${vehicle.id}/maintenance`
+                );
+                const data = await response.json();
+                setMaintenanceLogs(data);
+            } catch (error) {
+                console.error('Failed to fetch maintenance logs:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
         fetchMaintenanceLogs();
     }, [vehicle.id]);
-
-    const fetchMaintenanceLogs = async () => {
-        try {
-            const response = await fetch(
-                `http://localhost:3001/api/vehicles/${vehicle.id}/maintenance`
-            );
-            const data = await response.json();
-            setMaintenanceLogs(data);
-        } catch (error) {
-            console.error('Failed to fetch maintenance logs:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('en-US', {
