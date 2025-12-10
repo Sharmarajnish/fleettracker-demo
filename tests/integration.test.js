@@ -5,10 +5,10 @@
  */
 
 const request = require('supertest');
-const app = require('../src/server');
+const app = require('../server/server');
 
 // Mock database
-jest.mock('../src/lib/db', () => ({
+jest.mock('../server/lib/db', () => ({
     query: jest.fn(),
     getClient: jest.fn(),
     pool: {
@@ -16,7 +16,7 @@ jest.mock('../src/lib/db', () => ({
     }
 }));
 
-const db = require('../src/lib/db');
+const db = require('../server/lib/db');
 
 describe('FleetTracker Integration Tests', () => {
     describe('Vehicle Management Workflow', () => {

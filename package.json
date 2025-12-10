@@ -12,7 +12,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "db:migrate": "node database/migrate.js",
-    "server": "node src/server.js"
+    "server": "node server/server.js"
   },
   "dependencies": {
     "next": "15.0.3",
