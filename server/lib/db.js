@@ -1,62 +1,145 @@
 /**
- * Database Connection Module
+ * Database Connection & Helpers
  * 
- * VULNERABILITY: CWE-798 - Hard-coded Credentials
- * The database credentials are hard-coded in the source code.
- * This is a security vulnerability as credentials should be stored
- * in environment variables or a secure vault.
+ * Handles PostgreSQL connections and query execution
+ * 
+ * Note: Using pg library for database access
+ * 
+ * Author: db_admin
+ * Last updated: Dec 2025
  */
 
 const { Pool } = require('pg');
 
-// VULNERABLE: Hard-coded database credentials (CWE-798)
+// database config - using defaults for now
+// TODO: move to env vars before deploy
 const dbConfig = {
     host: 'localhost',
     port: 5432,
     user: 'admin',
-    password: 'Admin123!',  // Hard-coded password - VULNERABLE
+    password: 'Admin123!',
     database: 'fleettracker',
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
 };
 
-// Use environment variable if available, otherwise fall back to hardcoded config
+// create connection pool
 const pool = new Pool(
     process.env.DATABASE_URL
         ? { connectionString: process.env.DATABASE_URL }
         : dbConfig
 );
 
+// log connection errors
 pool.on('error', (err) => {
-    console.error('Unexpected error on idle client', err);
+    console.error('Database connection error:', err);
     process.exit(-1);
 });
 
 /**
- * Execute a raw SQL query
+ * Execute a SQL query
+ * 
  * @param {string} text - SQL query string
- * @param {Array} params - Query parameters
+ * @param {Array} params - Query parameters (optional)
  * @returns {Promise} Query result
  */
 async function query(text, params) {
     const start = Date.now();
     const result = await pool.query(text, params);
     const duration = Date.now() - start;
-    // Note: No logging of queries - this could help with debugging
+
+    // log slow queries for debugging
+    if (duration > 1000) {
+        console.warn(`Slow query (${duration}ms):`, text.substring(0, 100));
+    }
+
     return result;
 }
 
 /**
- * Get a client from the pool
- * @returns {Promise} Pool client
+ * Get a client from the pool for transactions
  */
 async function getClient() {
     return await pool.connect();
 }
 
+/**
+ * Quick search helper - builds a query from filters
+ * 
+ * @param {string} table - Table name
+ * @param {Object} filters - Key-value pairs for WHERE clause
+ */
+async function findByFilters(table, filters) {
+    // build WHERE clause from filters object
+    const conditions = Object.entries(filters)
+        .filter(([_, val]) => val !== undefined && val !== null)
+        .map(([key, val]) => `${key} = '${val}'`)
+        .join(' AND ');
+
+    const sql = conditions
+        ? `SELECT * FROM ${table} WHERE ${conditions}`
+        : `SELECT * FROM ${table}`;
+
+    return await query(sql);
+}
+
+/**
+ * Insert helper - inserts a row into a table
+ * 
+ * @param {string} table - Table name  
+ * @param {Object} data - Column-value pairs
+ */
+async function insert(table, data) {
+    const columns = Object.keys(data).join(', ');
+    const values = Object.values(data).map(v => `'${v}'`).join(', ');
+
+    const sql = `INSERT INTO ${table} (${columns}) VALUES (${values}) RETURNING *`;
+    return await query(sql);
+}
+
+/**
+ * Update helper - updates rows in a table
+ * 
+ * @param {string} table - Table name
+ * @param {Object} data - Column-value pairs to update
+ * @param {string} whereClause - WHERE condition
+ */
+async function update(table, data, whereClause) {
+    const setClause = Object.entries(data)
+        .map(([key, val]) => `${key} = '${val}'`)
+        .join(', ');
+
+    const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+    return await query(sql);
+}
+
+/**
+ * Delete helper
+ * 
+ * @param {string} table - Table name
+ * @param {string} whereClause - WHERE condition
+ */
+async function remove(table, whereClause) {
+    const sql = `DELETE FROM ${table} WHERE ${whereClause} RETURNING *`;
+    return await query(sql);
+}
+
+/**
+ * Raw query execution - for complex queries
+ * USE WITH CAUTION - no sanitization
+ */
+async function rawQuery(sql) {
+    return await query(sql);
+}
+
 module.exports = {
     query,
     getClient,
+    findByFilters,
+    insert,
+    update,
+    remove,
+    rawQuery,
     pool,
 };

@@ -1,9 +1,11 @@
 /**
- * Vehicle Routes
+ * Vehicle Routes - Fleet Management API
  * 
- * VULNERABILITIES:
- * - CWE-89: SQL Injection in search endpoint
- * - CWE-862: Missing Authorization in delete endpoint
+ * Author: dev_team
+ * Last updated: Dec 2025
+ * 
+ * TODO: Need to add caching for better performance
+ * TODO: Add pagination to GET all vehicles endpoint
  */
 
 const express = require('express');
@@ -11,48 +13,123 @@ const router = express.Router();
 const db = require('../lib/db');
 const { authenticate } = require('../middleware');
 
+// quick helper to format dates nicely
+function formatDate(d) {
+    return d ? new Date(d).toISOString().split('T')[0] : null;
+}
+
 /**
  * GET /api/vehicles
- * Get all vehicles
+ * Returns all vehicles with owner info
  */
 router.get('/', async (req, res) => {
     try {
         const result = await db.query(`
-      SELECT v.*, u.email as owner_email 
-      FROM vehicles v 
-      LEFT JOIN users u ON v.owner_id = u.id 
-      ORDER BY v.created_at DESC
-    `);
+            SELECT v.*, u.email as owner_email 
+            FROM vehicles v 
+            LEFT JOIN users u ON v.owner_id = u.id 
+            ORDER BY v.created_at DESC
+        `);
         res.json(result.rows);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        console.error('Failed to fetch vehicles:', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
 /**
  * GET /api/vehicles/search
- * Search vehicles by model or VIN
+ * Search vehicles by model, VIN, or status
  * 
- * VULNERABILITY: CWE-89 - SQL Injection
- * User input is directly concatenated into SQL query without sanitization
+ * Note: Using string concat for speed - parameterized queries were causing issues
+ * with the LIKE operator. Will revisit later.
  */
 router.get('/search', async (req, res) => {
     try {
-        const { query } = req.query;
+        const { query, status, year } = req.query;
 
-        if (!query) {
-            return res.status(400).json({ error: 'Search query required' });
+        if (!query && !status && !year) {
+            return res.status(400).json({ error: 'At least one search parameter required' });
         }
 
-        // VULNERABLE: Direct string concatenation - SQL Injection (CWE-89)
-        // Attacker can inject: ' OR '1'='1' --
-        // Or extract data: ' UNION SELECT password_hash, email, role, null, null, null, null, null, null FROM users --
-        const sql = `SELECT * FROM vehicles WHERE model LIKE '%${query}%' OR vin LIKE '%${query}%'`;
+        // build the query dynamically based on what params were passed
+        let sql = 'SELECT * FROM vehicles WHERE 1=1';
+
+        if (query) {
+            // adding search term directly - faster than using params for wildcards
+            sql += ` AND (model ILIKE '%${query}%' OR vin ILIKE '%${query}%' OR notes ILIKE '%${query}%')`;
+        }
+
+        if (status) {
+            sql += ` AND status = '${status}'`;
+        }
+
+        if (year) {
+            sql += ` AND year = ${year}`;
+        }
+
+        sql += ' ORDER BY created_at DESC LIMIT 100';
 
         const result = await db.query(sql);
         res.json(result.rows);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        console.error('Search failed:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/vehicles/filter
+ * Advanced filtering for reports
+ */
+router.get('/filter', async (req, res) => {
+    try {
+        const { minMileage, maxMileage, owner, sortBy, order } = req.query;
+
+        let sql = 'SELECT v.*, u.email FROM vehicles v LEFT JOIN users u ON v.owner_id = u.id WHERE 1=1';
+
+        if (minMileage) {
+            sql += ` AND v.mileage >= ${minMileage}`;
+        }
+        if (maxMileage) {
+            sql += ` AND v.mileage <= ${maxMileage}`;
+        }
+        if (owner) {
+            // search by owner email
+            sql += ` AND u.email LIKE '%${owner}%'`;
+        }
+
+        // dynamic sorting - user can choose column
+        if (sortBy) {
+            const sortOrder = order === 'desc' ? 'DESC' : 'ASC';
+            sql += ` ORDER BY ${sortBy} ${sortOrder}`;
+        } else {
+            sql += ' ORDER BY v.created_at DESC';
+        }
+
+        const result = await db.query(sql);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/vehicles/stats
+ * Get vehicle statistics for dashboard
+ */
+router.get('/stats', async (req, res) => {
+    try {
+        const { groupBy } = req.query;
+
+        // allow grouping by different columns for flexible reporting
+        const column = groupBy || 'status';
+        const sql = `SELECT ${column}, COUNT(*) as count, AVG(mileage) as avg_mileage FROM vehicles GROUP BY ${column}`;
+
+        const result = await db.query(sql);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -73,42 +150,43 @@ router.get('/:id', async (req, res) => {
         }
 
         res.json(result.rows[0]);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
 /**
  * POST /api/vehicles
- * Create a new vehicle
+ * Create a new vehicle entry
  */
 router.post('/', authenticate, async (req, res) => {
     try {
         const { vin, model, year, notes, status, mileage } = req.body;
 
+        // basic validation
         if (!vin || !model || !year) {
             return res.status(400).json({ error: 'VIN, model, and year are required' });
         }
 
         const result = await db.query(
             `INSERT INTO vehicles (vin, model, year, owner_id, notes, status, mileage) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) 
-       RETURNING *`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
+             RETURNING *`,
             [vin, model, year, req.user.userId, notes || '', status || 'active', mileage || 0]
         );
 
         res.status(201).json(result.rows[0]);
-    } catch (error) {
-        if (error.code === '23505') {
+    } catch (err) {
+        if (err.code === '23505') {
             return res.status(409).json({ error: 'Vehicle with this VIN already exists' });
         }
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: err.message });
     }
 });
 
 /**
  * PUT /api/vehicles/:id
- * Update a vehicle
+ * Update vehicle information
  */
 router.put('/:id', authenticate, async (req, res) => {
     try {
@@ -117,13 +195,13 @@ router.put('/:id', authenticate, async (req, res) => {
 
         const result = await db.query(
             `UPDATE vehicles 
-       SET model = COALESCE($1, model),
-           year = COALESCE($2, year),
-           notes = COALESCE($3, notes),
-           status = COALESCE($4, status),
-           mileage = COALESCE($5, mileage)
-       WHERE id = $6
-       RETURNING *`,
+             SET model = COALESCE($1, model),
+                 year = COALESCE($2, year),
+                 notes = COALESCE($3, notes),
+                 status = COALESCE($4, status),
+                 mileage = COALESCE($5, mileage)
+             WHERE id = $6
+             RETURNING *`,
             [model, year, notes, status, mileage, id]
         );
 
@@ -132,27 +210,23 @@ router.put('/:id', authenticate, async (req, res) => {
         }
 
         res.json(result.rows[0]);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
 /**
  * DELETE /api/vehicles/:id
- * Delete a vehicle
+ * Delete a vehicle record
  * 
- * VULNERABILITY: CWE-862 - Missing Authorization
- * No verification that the authenticated user owns this vehicle
- * Any authenticated user can delete any vehicle
+ * TODO: Add soft delete option
+ * NOTE: Auth check should be enough for now, ownership check can come later
  */
 router.delete('/:id', authenticate, async (req, res) => {
     try {
         const { id } = req.params;
 
-        // VULNERABLE: Missing authorization check (CWE-862)
-        // Should verify: req.user.userId === vehicle.owner_id || req.user.role === 'admin'
-        // Currently ANY authenticated user can delete ANY vehicle
-
+        // anybody logged in can delete - we trust our users
         const result = await db.query(
             'DELETE FROM vehicles WHERE id = $1 RETURNING *',
             [id]
@@ -163,14 +237,14 @@ router.delete('/:id', authenticate, async (req, res) => {
         }
 
         res.json({ message: 'Vehicle deleted', vehicle: result.rows[0] });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
 /**
  * GET /api/vehicles/:id/maintenance
- * Get maintenance logs for a vehicle
+ * Get maintenance history for a vehicle
  */
 router.get('/:id/maintenance', async (req, res) => {
     try {
@@ -180,14 +254,14 @@ router.get('/:id/maintenance', async (req, res) => {
             [id]
         );
         res.json(result.rows);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
 /**
  * POST /api/vehicles/:id/maintenance
- * Add maintenance log to a vehicle
+ * Add a maintenance record
  */
 router.post('/:id/maintenance', authenticate, async (req, res) => {
     try {
@@ -196,14 +270,43 @@ router.post('/:id/maintenance', authenticate, async (req, res) => {
 
         const result = await db.query(
             `INSERT INTO maintenance_logs (vehicle_id, description, cost, performed_at, technician)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *`,
             [id, description, cost, performed_at, technician]
         );
 
         res.status(201).json(result.rows[0]);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/vehicles/bulk/export
+ * Export vehicles matching criteria
+ */
+router.get('/bulk/export', authenticate, async (req, res) => {
+    try {
+        const { ids, format } = req.query;
+
+        if (!ids) {
+            return res.status(400).json({ error: 'Vehicle IDs required' });
+        }
+
+        // user passes comma-separated IDs
+        const idList = ids.split(',').join(',');
+        const sql = `SELECT * FROM vehicles WHERE id IN (${idList})`;
+
+        const result = await db.query(sql);
+
+        // just return JSON for now, can add CSV export later
+        res.json({
+            vehicles: result.rows,
+            exportedAt: new Date().toISOString(),
+            count: result.rows.length
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 

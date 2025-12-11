@@ -1,13 +1,17 @@
-name: Precogs AI Security Scan
+name: Security Scan
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   push:
-    branches: [main]
+    branches: [main, develop]
+  schedule:
+    # Run security scans weekly on Monday at 9am UTC
+    - cron: '0 9 * * 1'
 
 jobs:
-  security-scan:
+  # Run Precogs AI security scanner
+  precogs-scan:
     runs-on: ubuntu-latest
     
     steps:
@@ -35,14 +39,14 @@ jobs:
           output-format: sarif
         continue-on-error: true
       
-      - name: Upload SARIF results
+      - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: precogs-results.sarif
         continue-on-error: true
       
-      - name: Upload scan results artifact
+      - name: Upload scan results
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -51,31 +55,109 @@ jobs:
             precogs-report.json
             precogs-results.sarif
           retention-days: 30
+
+  # Run CodeQL analysis
+  codeql-analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
       
-      - name: Comment PR with scan results
-        if: github.event_name == 'pull_request'
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+          queries: security-and-quality
+      
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
+
+  # Run npm audit for dependency vulnerabilities
+  dependency-audit:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run npm audit
+        run: npm audit --json > npm-audit.json || true
+      
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-results
+          path: npm-audit.json
+          retention-days: 30
+
+  # Secret scanning (basic check for hardcoded secrets)
+  secret-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true  # Repo intentionally has hardcoded secrets for demo
+
+  # Create PR comment with security summary
+  pr-comment:
+    runs-on: ubuntu-latest
+    needs: [precogs-scan, codeql-analysis, dependency-audit]
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download Precogs results
+        uses: actions/download-artifact@v4
+        with:
+          name: precogs-scan-results
+        continue-on-error: true
+      
+      - name: Comment on PR
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             
-            let report;
+            let report = { critical: 'N/A', high: 'N/A', medium: 'N/A', low: 'N/A' };
             try {
               report = JSON.parse(fs.readFileSync('precogs-report.json', 'utf8'));
             } catch (e) {
-              report = {
-                critical: 'N/A',
-                high: 'N/A',
-                medium: 'N/A',
-                low: 'N/A',
-                reportUrl: 'Scan results not available'
-              };
+              console.log('Could not read Precogs report');
             }
             
             const criticalBadge = report.critical > 0 ? '🔴' : '🟢';
             const highBadge = report.high > 0 ? '🟠' : '🟢';
             
-            const comment = `## 🔒 Precogs AI Security Scan Results
+            const comment = `## 🔒 Security Scan Results
             
             | Severity | Count |
             |----------|-------|
@@ -84,25 +166,22 @@ jobs:
             | 🟡 Medium | ${report.medium} |
             | 🔵 Low | ${report.low} |
             
-            ### Vulnerabilities Detected
+            ### Intentional Vulnerabilities (Demo Application)
             
-            This application intentionally contains security vulnerabilities for demonstration:
-            
-            - **CWE-89**: SQL Injection in \`/api/vehicles/search\`
-            - **CWE-78**: Command Injection in \`/api/export\`
-            - **CWE-79**: Cross-Site Scripting in dashboard
-            - **CWE-22**: Path Traversal in \`/api/files\`
-            - **CWE-502**: Insecure Deserialization in \`/api/session\`
-            - **CWE-287**: Improper Authentication
-            - **CWE-798**: Hard-coded Credentials
-            - **CWE-862**: Missing Authorization
-            - **CWE-778**: Insufficient Logging
-            - **CVE-2025-55182**: React2Shell Pattern
-            
-            [View Full Report](${report.reportUrl || 'N/A'})
+            | CWE ID | Vulnerability | Location |
+            |--------|---------------|----------|
+            | CWE-89 | SQL Injection | \`/api/vehicles/search\`, \`/api/vehicles/filter\`, \`/api/reports/*\` |
+            | CWE-78 | Command Injection | \`/api/export/*\`, \`/api/files/process\` |
+            | CWE-22 | Path Traversal | \`/api/files/:filename\`, \`/api/files/document/*\` |
+            | CWE-502 | Insecure Deserialization | \`/api/session/*\` |
+            | CWE-287 | Improper Authentication | JWT with weak secret, no expiry |
+            | CWE-798 | Hard-coded Credentials | \`db.js\`, \`auth.js\` |
+            | CWE-862 | Missing Authorization | \`DELETE /api/vehicles/:id\` |
+            | CWE-778 | Insufficient Logging | Auth failure logging missing |
+            | CVE-2025-55182 | React2Shell | \`/dashboard/[id]/page.js\` |
             
             ---
-            ⚠️ **Note**: This is a demo application. Do not deploy to production.`;
+            ⚠️ **Warning**: This is a demo application with intentional vulnerabilities. Do not deploy to production!`;
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,

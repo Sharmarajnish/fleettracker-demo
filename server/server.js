@@ -16,6 +16,7 @@ const vehicleRoutes = require('./routes/vehicles');
 const exportRoutes = require('./routes/export');
 const fileRoutes = require('./routes/files');
 const sessionRoutes = require('./routes/session');
+const reportRoutes = require('./routes/reports');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -43,6 +44,7 @@ app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/session', sessionRoutes);
+app.use('/api/reports', reportRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
