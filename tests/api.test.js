@@ -104,7 +104,7 @@ describe('FleetTracker API', () => {
             const response = await request(app).get('/api/vehicles/search');
 
             expect(response.status).toBe(400);
-            expect(response.body.error).toBe('Search query required');
+            expect(response.body.error).toBe('At least one search parameter required');
         });
 
         test('GET /api/vehicles/search returns filtered results', async () => {
