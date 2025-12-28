@@ -218,3 +218,32 @@ router.get('/search-logs', authenticate, async (req, res) => {
 });
 
 module.exports = router;
+
+router.get('/search-logs', authenticate, async (req, res) => {
+    try {
+        const { keyword, userId, action, limit } = req.query;
+
+        const recordLimit = limit || 50;
+
+        let sql = `SELECT * FROM activity_logs WHERE 1=1`;
+
+        if (keyword) {
+            sql += ` AND (details ILIKE '%${keyword}%' OR action ILIKE '%${keyword}%')`;
+        }
+        if (userId) {
+            sql += ` AND user_id = ${userId}`;
+        }
+        if (action) {
+            sql += ` AND action = '${action}'`;
+        }
+
+        sql += ` ORDER BY created_at DESC LIMIT ${recordLimit}`;
+
+        const result = await db.query(sql);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+module.exports = router;
