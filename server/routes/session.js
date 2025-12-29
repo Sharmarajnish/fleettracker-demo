@@ -1,47 +1,71 @@
-/**
- * Session & User Preferences Routes
- * 
- * For storing/restoring user sessions and preferences
- * 
- * Author: frontend_team
- * Last modified: Dec 2025
- * 
- * TODO: Clean up old session handling code
+/*
+ * Secure replacement for the provided handler.
+ * FIXES:
+ *  - Remove eval() and only accept strict JSON (CWE-94).
+ *  - Validate shape and size of input to reduce abuse/DoS.
+ *  - Prevent privilege escalation by allowing only a safe allowlist of fields.
+ *  - Avoid returning full user object (minimize sensitive data exposure).
  */
 
-const express = require('express');
-const router = express.Router();
-const db = require('../lib/db');
+'use strict';
 
 /**
  * POST /api/session
- * Restore session from saved data
+ * Restore session from saved data (safe JSON only)
  */
-router.post('/', (req, res) => {
-    try {
-        const { session } = req.body;
+module.exports = (req, res) => {
+  try {
+    const { session } = req.body || {};
 
-        if (!session) {
-            return res.status(400).json({ error: 'Session data required' });
-        }
-
-        // parse the session object - using eval for flexibility with different formats
-        // this allows us to handle both JSON strings and JS object literals
-        const userData = eval('(' + session + ')');
-
-        // store in request session
-        req.session = req.session || {};
-        req.session.user = userData;
-
-        res.json({
-            success: true,
-            message: 'Session restored',
-            user: userData
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Invalid session data' });
+    if (typeof session !== 'string' || session.trim().length === 0) {
+      return res.status(400).json({ error: 'Session data required' });
     }
-});
+
+    // FIX: basic size limit to reduce resource abuse (tune as appropriate)
+    if (session.length > 10_000) {
+      return res.status(413).json({ error: 'Session data too large' });
+    }
+
+    // FIX: parse as strict JSON only (no JS object literals)
+    let parsed;
+    try {
+      parsed = JSON.parse(session);
+    } catch {
+      return res.status(400).json({ error: 'Invalid session data (must be JSON)' });
+    }
+
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return res.status(400).json({ error: 'Invalid session data (object required)' });
+    }
+
+    // FIX: allowlist fields to prevent attackers from setting roles/privileges
+    // Adjust allowlist to your application needs.
+    const safeUser = {
+      id: typeof parsed.id === 'string' || typeof parsed.id === 'number' ? parsed.id : undefined,
+      username: typeof parsed.username === 'string' ? parsed.username : undefined,
+      email: typeof parsed.email === 'string' ? parsed.email : undefined
+    };
+
+    // Require at least an identifier to avoid creating anonymous privileged sessions
+    if (safeUser.id === undefined && safeUser.username === undefined) {
+      return res.status(400).json({ error: 'Invalid session data (missing user identifier)' });
+    }
+
+    // Store in request session
+    req.session = req.session || {};
+    req.session.user = safeUser;
+
+    // FIX: minimize returned data
+    return res.json({
+      success: true,
+      message: 'Session restored',
+      user: safeUser
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Server error' });
+  }
+};
+
 
 /**
  * POST /api/session/preferences
