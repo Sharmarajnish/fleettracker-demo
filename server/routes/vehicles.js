@@ -1,118 +1,71 @@
-/**
- * Vehicle Routes - Fleet Management API
- * 
- * Author: dev_team
- * Last updated: Dec 2025
- * 
- * TODO: Need to add caching for better performance
- * TODO: Add pagination to GET all vehicles endpoint
- */
-
-const express = require('express');
-const router = express.Router();
-const db = require('../lib/db');
-const { authenticate } = require('../middleware');
-
-// quick helper to format dates nicely
-function formatDate(d) {
-    return d ? new Date(d).toISOString().split('T')[0] : null;
-}
-
-/**
- * GET /api/vehicles
- * Returns all vehicles with owner info
- */
-router.get('/', async (req, res) => {
-    try {
-        const result = await db.query(`
-            SELECT v.*, u.email as owner_email 
-            FROM vehicles v 
-            LEFT JOIN users u ON v.owner_id = u.id 
-            ORDER BY v.created_at DESC
-        `);
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Failed to fetch vehicles:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * GET /api/vehicles/search
- * Search vehicles by model, VIN, or status
- * 
- * Note: Using string concat for speed - parameterized queries were causing issues
- * with the LIKE operator. Will revisit later.
- */
-router.get('/search', async (req, res) => {
-    try {
-        const { query, status, year } = req.query;
-
-        if (!query && !status && !year) {
-            return res.status(400).json({ error: 'At least one search parameter required' });
-        }
-
-        // build the query dynamically based on what params were passed
-        let sql = 'SELECT * FROM vehicles WHERE 1=1';
-
-        if (query) {
-            // adding search term directly - faster than using params for wildcards
-            sql += ` AND (model ILIKE '%${query}%' OR vin ILIKE '%${query}%' OR notes ILIKE '%${query}%')`;
-        }
-
-        if (status) {
-            sql += ` AND status = '${status}'`;
-        }
-
-        if (year) {
-            sql += ` AND year = ${year}`;
-        }
-
-        sql += ' ORDER BY created_at DESC LIMIT 100';
-
-        const result = await db.query(sql);
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Search failed:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
+```javascript
 /**
  * GET /api/vehicles/filter
  * Advanced filtering for reports
  */
-router.get('/filter', async (req, res) => {
+async (req, res) => {
     try {
         const { minMileage, maxMileage, owner, sortBy, order } = req.query;
 
+        // FIX: Use parameterized queries for all user-controlled values.
+        // FIX: Whitelist sortable columns to prevent ORDER BY injection.
+        const allowedSortColumns = new Set([
+            'v.created_at',
+            'v.mileage',
+            'v.id',
+            'u.email'
+        ]);
+
+        const values = [];
+        let paramIndex = 1;
+
         let sql = 'SELECT v.*, u.email FROM vehicles v LEFT JOIN users u ON v.owner_id = u.id WHERE 1=1';
 
-        if (minMileage) {
-            sql += ` AND v.mileage >= ${minMileage}`;
-        }
-        if (maxMileage) {
-            sql += ` AND v.mileage <= ${maxMileage}`;
-        }
-        if (owner) {
-            // search by owner email
-            sql += ` AND u.email LIKE '%${owner}%'`;
+        if (minMileage !== undefined && minMileage !== '') {
+            const n = Number(minMileage);
+            if (!Number.isFinite(n)) {
+                return res.status(400).json({ error: 'minMileage must be a number' });
+            }
+            sql += ` AND v.mileage >= $${paramIndex++}`;
+            values.push(n);
         }
 
-        // dynamic sorting - user can choose column
+        if (maxMileage !== undefined && maxMileage !== '') {
+            const n = Number(maxMileage);
+            if (!Number.isFinite(n)) {
+                return res.status(400).json({ error: 'maxMileage must be a number' });
+            }
+            sql += ` AND v.mileage &lt;= $${paramIndex++}`;
+            values.push(n);
+        }
+
+        if (owner) {
+            // FIX: Parameterize LIKE pattern; do not interpolate into SQL.
+            sql += ` AND u.email ILIKE $${paramIndex++}`;
+            values.push(`%${owner}%`);
+        }
+
+        // FIX: Whitelist ORDER BY column; never parameterize identifiers.
         if (sortBy) {
-            const sortOrder = order === 'desc' ? 'DESC' : 'ASC';
-            sql += ` ORDER BY ${sortBy} ${sortOrder}`;
+            const normalizedSortBy = String(sortBy).trim();
+            if (!allowedSortColumns.has(normalizedSortBy)) {
+                return res.status(400).json({ error: 'Invalid sortBy column' });
+            }
+            const sortOrder = String(order).toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+            sql += ` ORDER BY ${normalizedSortBy} ${sortOrder}`;
         } else {
             sql += ' ORDER BY v.created_at DESC';
         }
 
-        const result = await db.query(sql);
+        const result = await db.query(sql, values);
         res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        // FIX: Avoid leaking internal error details to clients.
+        res.status(500).json({ error: 'Internal server error' });
     }
-});
+}
+```
+Why this fix is secure and correct: It eliminates SQL injection by using prepared/parameterized placeholders for all user-supplied values (mileage bounds and owner filter). It prevents ORDER BY injection by restricting sortBy to a strict allowlist of known-safe column identifiers (identifiers cannot be safely parameterized). It also validates numeric inputs and avoids returning raw database error messages to clients.
 
 /**
  * GET /api/vehicles/stats
